@@ -1,0 +1,238 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <DS3231.h>
+#include <Servo.h>
+#include <Keypad.h>
+#include <LowPower.h>
+#include <avr/wdt.h>
+
+const byte ROWS = 4; // Four rows
+const byte COLS = 4; // Four columns
+
+// Define the Keymap
+char keys[ROWS][COLS] = {
+  {'1', '2', '3', 'A'},
+  {'4', '5', '6', 'B'},
+  {'7', '8', '9', 'C'},
+  {'*', '0', '#', 'D'}
+};
+
+// Connect keypad ROW0, ROW1, ROW2, and ROW3 to these Arduino pins.
+byte rowPins[ROWS] = {2, 3, 4, 5};
+
+// Connect keypad COL0, COL1, COL2, and COL3 to these Arduino pins.
+byte colPins[COLS] = {6, 7, 8, 9};
+
+// Create the Keypad
+Keypad kpd = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+
+DS3231 rtc(A4, A5);
+Servo servo_test; // Initialize a servo object for the connected servo
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Creates an LC object. Parameters: (address, columns, rows)
+
+// Initialize variables
+int t1, t2, t3, t4, t5, t6;
+boolean feed = false; 
+boolean feedAuto = true;
+char key;
+int r[6];
+int buttonPress = 1;
+
+// ultrasonic var
+const int trigPin = 10;  
+const int echoPin = 12; 
+long timer;
+int jarak;
+const float soundSpeed = 340.f / 10000.f;
+
+// millis buat delay async
+int period = 1000;
+unsigned long lastFeedTime = 0;
+unsigned long feedDelay = 3 * 3600000; // 3 hour in milliseconds
+unsigned long feedDelayDtk = 1000; // 1 dtk in milliseconds
+
+bool sudahInput = false;
+
+void setup() {
+  servo_test.attach(11); // Attach the signal pin of the servo to pin 11 of Arduino
+  rtc.begin();
+  lcd.init();
+  lcd.backlight();
+  servo_test.write(55); 
+
+  MCUSR &= ~(1<<WDRF);
+  wdt_disable();
+  Serial.begin(9600);
+
+  delay(2000);
+  wdt_enable(WDTO_8S);
+
+  // pinMode(A0, OUTPUT);
+  pinMode(A1, OUTPUT);
+  // pinMode(A2, OUTPUT);
+  pinMode(A3, INPUT);
+  pinMode(trigPin, OUTPUT);  
+	pinMode(echoPin, INPUT);  
+
+}
+
+
+void loop() {
+  detachInterrupt(2);
+  wdt_reset();
+  lcd.setCursor(0, 0);
+  buttonPress = digitalRead(A3);
+  Serial.println(buttonPress);
+
+  // masuk menu
+  sudahInput = false;
+  if (kpd.getKey() == 'A') {
+    delay(500);
+    setFeedingDelay();
+  }
+
+  lcd.print("Time:  ");
+  String t = "";
+  t = rtc.getTimeStr();
+  Serial.println(t);
+
+  lcd.print(rtc.getTimeStr());
+  lcd.setCursor(0, 1);
+  lcd.print("Delay now: ");
+  lcd.print(feedDelayDtk/1000);
+
+  // // kasih makan pake waktu
+  // if (t1 == r[0] && t2 == r[1] && t3 == r[2] && t4 == r[3] && t5 < 1 && t6 < 3 && feed == true) {
+  //   kasihMakan();
+  // }
+
+  // fungsi ultrasonic
+  ultraSonic();
+  timer = pulseIn(echoPin, HIGH);
+  jarak = ( timer *  soundSpeed ) / 2;
+  // delay(100);
+
+  Serial.print("Jarak = ");
+  Serial.print(jarak);
+  Serial.print(" cm");
+  Serial.println();
+
+  // kasih makan pake jarak
+  if (jarak < 8 && feedAuto == true) {
+    kasihMakan();
+    // tandain waktu terakhir makan
+    lastFeedTime = millis();
+    feedAuto = false;
+  }
+
+  // Cek apakah sudah satu jam berlalu
+  if (!feedAuto && (millis() - lastFeedTime >= feedDelay)) {
+    feedAuto = true;
+  }
+
+  // Cek apakah sudah x dtk berlalu
+  if (!feedAuto && (millis() - lastFeedTime >= feedDelayDtk)) {
+    feedAuto = true;
+  }
+
+}
+
+void setFeedingDelay() {
+  feed = true;
+  int i = 0;
+  char j = 0;
+  buttonPress = 1;
+  sudahInput = false;
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Atur jeda makan");
+  delay(1000);
+  lcd.clear();
+  lcd.print("Brp jam sekali?");
+  lcd.setCursor(0, 1);
+
+  while (1) {
+    key = kpd.getKey();
+
+    if (key != NO_KEY && sudahInput == false) {
+      lcd.setCursor(0, 1);
+
+      lcd.print(key);
+
+      r[0] = key - 48;
+      delay(500);
+      sudahInput = true;
+    }
+
+    Serial.println(r[0]);
+
+    feedDelay = r[0] * 3600000;
+    feedDelayDtk = r[0] * 1000;
+
+    buttonPress = digitalRead(A3);
+    Serial.println(buttonPress);
+    Serial.println(key);
+
+    if (key == 'D' && sudahInput == true && r[0] != 0) {
+      delay(500);
+      key = 0;
+      break;
+    }
+
+    delay(100);
+  }
+}
+
+void setFeedingTime() {
+  feed = true;
+  int i = 0;
+  char j = 0;
+  buttonPress = 1;
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Set feeding Time");
+  lcd.clear();
+  lcd.print("HH:MM");
+  lcd.setCursor(0, 1);
+
+  while (1) {
+    key = kpd.getKey();
+
+    if (key != NO_KEY) {
+      lcd.setCursor(j, 1);
+
+      lcd.print(key);
+
+      r[i] = key - 48;
+      i++;
+      j++;
+      delay(500);
+    }
+
+    buttonPress = digitalRead(A3);
+    Serial.println(buttonPress);
+    Serial.println(key);
+
+    if (key == 'D' || j == 1) {
+      key = 0;
+      break;
+    }
+  }
+}
+
+void ultraSonic() {
+  digitalWrite(trigPin, LOW);  
+	delayMicroseconds(2);  
+	digitalWrite(trigPin, HIGH);  
+	delayMicroseconds(10);  
+	digitalWrite(trigPin, LOW);  
+}
+
+void kasihMakan() {
+  servo_test.write(130); // Command to rotate the servo to the specified angle 
+  delay(2500);   
+  servo_test.write(55); 
+  feed = false;
+}
